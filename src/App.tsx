@@ -1,128 +1,183 @@
-import "./styles.css";
+import { useCallback, useMemo, useState } from "react";
+import { usePlan } from "./usePlan";
+import { nextId } from "./engine";
+import type { Batch } from "./types";
+import Timeline from "./components/Timeline";
+import PositionMap from "./components/PositionMap";
+import ShowPreview from "./components/ShowPreview";
+import Outbox from "./components/Outbox";
+import Inspector from "./components/Inspector";
+import PositionCalc from "./components/PositionCalc";
+import ModelCatalog from "./components/ModelCatalog";
+import Conflicts from "./components/Conflicts";
 
-const project = {
-  "sourceNo": 10,
-  "id": "hxyfront-62008",
-  "port": 62008,
-  "title": "烟花燃放脚本编排",
-  "domain": "烟花燃放编排",
-  "prompt": "我想做一个面向烟花燃放编排师的燃放脚本前端工具，可以记录节目段落、烟花型号、口径、发射角度、点火时间、持续时间、安全距离和音乐时间点。页面需要有时间轴编排、燃放点位平面图、型号清单、冲突时间提示和整场节目预览。",
-  "palette": [
-    "#1d4ed8",
-    "#dc2626",
-    "#f59e0b"
-  ],
-  "metrics": [
-    "节目段落",
-    "点火节点",
-    "冲突提示",
-    "安全距离"
-  ],
-  "filters": [
-    "礼花弹",
-    "罗马烛光",
-    "扇形架",
-    "冷焰火"
-  ],
-  "fields": [
-    "节目段落",
-    "烟花型号",
-    "口径",
-    "发射角度",
-    "点火时间",
-    "安全距离"
-  ],
-  "records": [
-    [
-      "Intro",
-      "30mm扇形架",
-      "00:12.500",
-      "安全距离35m"
-    ],
-    [
-      "Chorus A",
-      "75mm礼花弹",
-      "01:08.200",
-      "与B点位间隔正常"
-    ],
-    [
-      "Finale",
-      "冷焰火",
-      "03:42.000",
-      "近景区待确认"
-    ]
-  ]
-};
+export default function App() {
+  const {
+    plan,
+    commit,
+    derived,
+    outbox,
+    simulateFailure,
+    setSimulateFailure,
+    lastWrittenVersion,
+    saveState,
+    dirty,
+    writeToDisk,
+    retryJob,
+  } = usePlan();
 
-function App() {
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
+
+  const selected = useMemo(
+    () => derived.scheduled.find((s) => s.batch.id === selectedBatchId) ?? null,
+    [derived.scheduled, selectedBatchId],
+  );
+
+  const moveMusicPoint = useCallback(
+    (id: string, time: number) =>
+      commit((p) => ({
+        ...p,
+        musicPoints: p.musicPoints.map((m) => (m.id === id ? { ...m, time } : m)),
+      })),
+    [commit],
+  );
+
+  const moveBatchOffset = useCallback(
+    (id: string, offset: number) =>
+      commit((p) => ({
+        ...p,
+        batches: p.batches.map((b) => (b.id === id ? { ...b, offset } : b)),
+      })),
+    [commit],
+  );
+
+  const updateBatch = useCallback(
+    (id: string, patch: Partial<Batch>) =>
+      commit((p) => ({
+        ...p,
+        batches: p.batches.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      })),
+    [commit],
+  );
+
+  const deleteBatch = useCallback(
+    (id: string) => {
+      commit((p) => ({ ...p, batches: p.batches.filter((b) => b.id !== id) }));
+      setSelectedBatchId(null);
+    },
+    [commit],
+  );
+
+  const addBatch = useCallback(() => {
+    const id = nextId("b");
+    commit((p) => ({
+      ...p,
+      batches: [
+        ...p.batches,
+        {
+          id,
+          name: "新批次",
+          musicPointId: p.musicPoints[0]?.id ?? "",
+          offset: 0,
+          positionId: p.positions[0]?.id ?? "",
+          modelId: p.models[0]?.id ?? "",
+          quantity: 1,
+        },
+      ],
+    }));
+    setSelectedBatchId(id);
+  }, [commit]);
+
+  const addMusicPoint = useCallback(() => {
+    commit((p) => {
+      const last = p.musicPoints.reduce((a, m) => Math.max(a, m.time), 0);
+      return {
+        ...p,
+        musicPoints: [...p.musicPoints, { id: nextId("mp"), label: "新段落", time: Math.round((last + 10) * 10) / 10 }],
+      };
+    });
+  }, [commit]);
+
   return (
-    <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
-
-      <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[86, 14, 7, 32][index] ?? 12}</strong>
-          </article>
-        ))}
-      </section>
-
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}筛选</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存草稿</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>历史记录</p>
-            <h2>近期工作台</h2>
-          </div>
-          <button>导出摘要</button>
+    <main className="app console">
+      <header className="topbar">
+        <div className="topbar-title">
+          <p>燃放脚本编排台</p>
+          <h1>{plan.title}</h1>
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
+        <div className="topbar-actions">
+          <span className={`version-badge ${dirty ? "dirty" : "clean"}`}>方案版本 v{plan.version}</span>
+          <span className={`save-state ${saveState}`}>
+            {saveState === "saving" && "写盘中…"}
+            {saveState === "saved" && `已写入 v${lastWrittenVersion}`}
+            {saveState === "error" && "写盘失败 · 待补写"}
+            {saveState === "idle" && (dirty ? "有未写入变更" : "已写入")}
+          </span>
+          <label className="fail-toggle">
+            <input type="checkbox" checked={simulateFailure} onChange={(e) => setSimulateFailure(e.target.checked)} />
+            模拟写盘失败
+          </label>
+          <button className="primary" onClick={writeToDisk} disabled={saveState === "saving"}>
+            写盘
+          </button>
         </div>
-      </section>
+      </header>
+
+      <ShowPreview plan={plan} derived={derived} />
+
+      <div className="grid grid-main">
+        <Timeline
+          plan={plan}
+          derived={derived}
+          selectedBatchId={selectedBatchId}
+          onSelectBatch={setSelectedBatchId}
+          onMoveMusicPoint={moveMusicPoint}
+          onMoveBatchOffset={moveBatchOffset}
+        />
+        <Inspector
+          plan={plan}
+          selected={selected}
+          onUpdateBatch={updateBatch}
+          onDeleteBatch={deleteBatch}
+          onAddBatch={addBatch}
+          onAddMusicPoint={addMusicPoint}
+        />
+      </div>
+
+      <div className="grid grid-mid">
+        <PositionMap
+          plan={plan}
+          derived={derived}
+          selectedPositionId={selectedPositionId}
+          onSelectPosition={setSelectedPositionId}
+        />
+        <Outbox
+          outbox={outbox}
+          simulateFailure={simulateFailure}
+          onToggleFailure={setSimulateFailure}
+          onRetry={retryJob}
+          lastWrittenVersion={lastWrittenVersion}
+          currentVersion={plan.version}
+          saveState={saveState}
+        />
+      </div>
+
+      <PositionCalc
+        plan={plan}
+        derived={derived}
+        selectedPositionId={selectedPositionId}
+        onSelectPosition={setSelectedPositionId}
+      />
+
+      <div className="grid grid-low">
+        <Conflicts derived={derived} />
+        <ModelCatalog plan={plan} />
+      </div>
+
+      <footer className="footnote">
+        时间轴、点位图与整场预览均由同一版方案（v{plan.version}）派生；音乐时间点变更会重算绑定批次与后续火力，人工偏移保留。
+      </footer>
     </main>
   );
 }
-
-export default App;
